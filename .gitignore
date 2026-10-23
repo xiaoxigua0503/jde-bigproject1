@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Secrets
+.env
+*.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Data files
+data/raw/*
+data/processed/*
+
+# Logs
+logs/*
+
+*.csv
