@@ -140,126 +140,44 @@ def youtube_get(endpoint: str, params: dict) -> dict:
         f"YouTube API request failed. Endpoint: {endpoint}"
     )
 
-def search_channels(artist_name: str) -> dict:
-    try:
-        # Step 1: Search for candidate channels.
-        search_data = youtube_get(
-            endpoint="search",
-            params={
-                "part": "snippet",
-                "type": "channel",
-                "q": artist_name,
-                "maxResults": 50,
-            },
-        )
+def get_channel_details(channel_id, artist_name):
+    """Retrieve channel metadata and statistics by channel ID."""
 
-        items = search_data.get("items", [])
+    params = {
+        "part": "snippet,statistics,contentDetails",
+        "id": channel_id,
+    }
 
-        if not items:
-            logger.warning("No channels found for artist: %s", artist_name)
-            return {}
+    response = youtube_get("channels", params)
+    items = response.get("items", [])
 
-        # Step 2: Extract candidate channel IDs.
-        channel_ids = [
-            item["id"]["channelId"]
-            for item in items
-            if item.get("id", {}).get("channelId")
-        ]
-
-        if not channel_ids:
-            logger.warning("No valid channel IDs for artist: %s", artist_name)
-            return {}
-
-        # Step 3: Retrieve subscriber counts in batches.
-        candidates = []
-
-        for start in range(0, len(channel_ids), YOUTUBE_BATCH_SIZE):
-            batch_ids = channel_ids[
-                start : start + YOUTUBE_BATCH_SIZE
-            ]
-
-            channel_data = youtube_get(
-                endpoint="channels",
-                params={
-                    "part": "snippet,statistics,contentDetails",
-                    "id": ",".join(batch_ids),
-                },
-            )
-
-            candidates.extend(channel_data.get("items", []))
-
-        if not candidates:
-            logger.warning(
-                "No channel details found for artist: %s",
-                artist_name,
-            )
-            return {}
-
-        # Step 4: Keep channels with a publicly available subscriber count.
-        eligible_channels = []
-
-        for channel in candidates:
-            statistics = channel.get("statistics", {})
-
-            if "subscriberCount" not in statistics:
-                continue
-
-            try:
-                subscriber_count = int(statistics["subscriberCount"])
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Invalid subscriber count for channel: %s",
-                    channel.get("id"),
-                )
-                continue
-
-            snippet = channel.get("snippet", {})
-            content_details = channel.get("contentDetails", {})
-            related_playlists = content_details.get("relatedPlaylists", {})
-
-            eligible_channels.append(
-                {
-                    "artist_name": artist_name,
-                    "channel_id": channel.get("id"),
-                    "channel_title": snippet.get("title"),
-                    "description": snippet.get("description"),
-                    "channel_created_at": snippet.get("publishedAt"),
-                    "uploads_playlist_id": related_playlists.get("uploads"),
-                    "subscriber_count": subscriber_count,
-                    "view_count": statistics.get("viewCount"),
-                    "video_count": statistics.get("videoCount"),
-                }
-            )
-
-        if not eligible_channels:
-            logger.warning(
-                "No channels with public subscriber counts for artist: %s",
-                artist_name,
-            )
-            return {}
-
-        # Step 5: Select the channel with the highest subscriber count.
-        selected_channel = max(
-            eligible_channels,
-            key=lambda channel: channel["subscriber_count"],
-        )
-
-        logger.info(
-            "Selected channel for %s: %s | Subscribers: %s",
+    if not items:
+        logger.warning(
+            "No channel found for artist=%s, channel_id=%s",
             artist_name,
-            selected_channel["channel_title"],
-            selected_channel["subscriber_count"],
+            channel_id,
         )
+        return None
 
-        return selected_channel
+    channel = items[0]
 
-    except Exception:
-        logger.exception(
-            "Failed to search channels for artist: %s",
-            artist_name,
-        )
-        raise
-
+    return {
+        "channel_id": channel["id"],
+        "artist_name": artist_name,
+        "channel_title": channel["snippet"].get("title"),
+        "channel_description": channel["snippet"].get("description"),
+        "published_at": channel["snippet"].get("publishedAt"),
+        "country": channel["snippet"].get("country"),
+        "custom_url": channel["snippet"].get("customUrl"),
+        "subscriber_count": channel.get("statistics", {}).get(
+            "subscriberCount"
+        ),
+        "video_count": channel.get("statistics", {}).get("videoCount"),
+        "view_count": channel.get("statistics", {}).get("viewCount"),
+        "uploads_playlist_id": channel.get(
+            "contentDetails", {}
+        ).get("relatedPlaylists", {}).get("uploads"),
+    }
 
 def get_channel_playlists(channel_id: str) -> list[dict]:
     playlists = []

@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
-from etl.extract import get_channel_playlists, get_channel_videos, get_video_comments
+from etl.extract import get_channel_details, get_channel_playlists, get_channel_videos, get_video_comments
 from etl.transform import load_json, save_to_json, transform_all
 from etl.load import load_to_bigquery
 from etl.config import setup_logging
@@ -12,8 +12,8 @@ from etl.config import setup_logging
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract, transform, and load YouTube artist data into BigQuery")
     parser.add_argument("--mapping-file", default="data/mapping/channel_mapping.json", help="Path to artist-channel mapping JSON")
-    parser.add_argument("--max-videos",type=int,default=100,help="Số video tối đa cần lấy cho mỗi nghệ sĩ (mặc định: 100)")
-    parser.add_argument("--comments-limit",type=int,default=None,help="Số comments tối đa mỗi video; bỏ trống để lấy tất cả comments API cho phép")
+    parser.add_argument("--max-videos",type=int,default=50,help="Số video tối đa cần lấy cho mỗi nghệ sĩ (mặc định: 100)")
+    parser.add_argument("--comments-limit",type=int,default=30,help="Số comments tối đa mỗi video; bỏ trống để lấy tất cả comments API cho phép")
     parser.add_argument("--raw-dir",default="data/raw",help="Thư mục lưu dữ liệu raw")
     parser.add_argument("--processed-dir",default="data/processed",help="Thư mục lưu dữ liệu sau transform")
     parser.add_argument("--skip-load",action="store_true",help="Chỉ extract và transform, không load dữ liệu lên BigQuery")
@@ -54,7 +54,7 @@ def main() -> None:
 
     logging.info("Loaded %s artist mappings", len(artist_names))
 
-    # 3. Extract data
+    # 3. Initialize raw data
     raw_data = {
         "artists": [],
         "playlists": [],
@@ -62,6 +62,7 @@ def main() -> None:
         "comments": [],
     }
 
+    # 4. Extract data
     for index, artist_name in enumerate(artist_names, start=1):
         logging.info(
             "[%s/%s] Processing artist: %s",
@@ -71,29 +72,43 @@ def main() -> None:
         )
 
         try:
-            # Get mapped channel
-            channel = channel_mapping[artist_name]
+            # Get mapped channel ID
+            mapping = channel_mapping[artist_name]
+            candidates = mapping.get("candidates", [])
 
-            if not isinstance(channel, dict):
+            if not candidates:
                 logging.warning(
-                    "Invalid mapping for artist: %s",
-                    artist_name,
+                "No candidates found for artist: %s",
+                artist_name
                 )
                 continue
 
-            channel = dict(channel)
-            channel.setdefault("artist_name", artist_name)
-
-            channel_id = channel.get("channel_id")
-            uploads_playlist_id = channel.get("uploads_playlist_id")
+            # channel_id trong mapping đã được xác nhận
+            channel_id = candidates[0].get("channel_id")
 
             if not channel_id:
                 logging.warning(
-                    "Missing channel_id in mapping for artist: %s",
+                "Missing channel_id in mapping for artist: %s",
+                artist_name
+                )
+                continue
+
+            # Retrieve channel metadata and uploads playlist ID
+            channel = get_channel_details(
+                channel_id=channel_id,
+                artist_name=artist_name,
+            )
+
+            if not channel:
+                logging.warning(
+                    "Could not retrieve channel details for artist: %s",
                     artist_name,
                 )
                 continue
 
+            uploads_playlist_id = channel.get("uploads_playlist_id")
+
+            # Save channel details
             raw_data["artists"].append(channel)
 
             logging.info(
@@ -119,14 +134,15 @@ def main() -> None:
                     artist_name,
                 )
 
-            # Extract videos
+            # Validate uploads playlist ID
             if not uploads_playlist_id:
                 logging.warning(
-                    "No uploads playlist for %s",
+                    "No uploads playlist found for %s",
                     artist_name,
                 )
                 continue
 
+            # Extract videos
             try:
                 videos = get_channel_videos(
                     channel_id=channel_id,
@@ -186,7 +202,7 @@ def main() -> None:
                 artist_name,
             )
 
-    # 4. Save raw data
+    # 5. Save raw data
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     raw_file = raw_dir / f"youtube_raw_{timestamp}.json"
 
@@ -194,7 +210,7 @@ def main() -> None:
 
     logging.info("Raw data saved to %s", raw_file)
 
-    # 5. Transform data
+    # 6. Transform data
     processed_data = transform_all(
         artists=raw_data["artists"],
         playlists=raw_data["playlists"],
@@ -211,14 +227,14 @@ def main() -> None:
         len(processed_data["comments"]),
     )
 
-    # 6. Save processed data
+    # 7. Save processed data
     processed_file = processed_dir / f"youtube_processed_{timestamp}.json"
 
     save_to_json(processed_data, str(processed_file))
 
     logging.info("Processed data saved to %s", processed_file)
 
-    # 7. Load data into BigQuery
+    # 8. Load data into BigQuery
     if args.skip_load:
         logging.info("Skipping BigQuery load (--skip-load enabled)")
 

@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
 
 def setup_logging(log_dir: Path, log_level: str) -> Path:
