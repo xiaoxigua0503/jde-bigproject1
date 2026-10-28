@@ -235,37 +235,37 @@ def main() -> None:
     logging.info("Processed data saved to %s", processed_file)
 
     # 8. Load data into BigQuery
-    if args.skip_load:
-        logging.info("Skipping BigQuery load (--skip-load enabled)")
+    # 7. Load raw and processed data to BigQuery
+    if not args.skip_load:
+        datasets = [
+            ("raw", raw_data),
+            ("processed", processed_data),
+        ]
 
-    else:
-        for table_name in [
-            "artists",
-            "playlists",
-            "videos",
-            "comments",
-        ]:
-            records = processed_data[table_name]
+    for data_type, dataset in datasets:
+        for table_name in ["artists", "playlists", "videos", "comments"]:
+            records = dataset.get(table_name, [])
 
             if not records:
                 logging.warning(
-                    "No records to load for %s",
+                    "Skip loading empty table: %s_%s",
                     table_name,
+                    data_type,
                 )
                 continue
 
+            bq_table_name = f"{table_name}_{data_type}"
+
             load_to_bigquery(
                 data=records,
-                table_name=table_name,
+                table_name=bq_table_name,
             )
 
             logging.info(
                 "Loaded %s records into BigQuery table %s",
                 len(records),
-                table_name,
+                bq_table_name,
             )
-
-    logging.info("YouTube ETL pipeline completed")
 
 
 if __name__ == "__main__":
